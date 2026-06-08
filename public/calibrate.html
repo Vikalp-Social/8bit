@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Branch Calibration</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; display: flex; flex-direction: column; align-items: center; font-family: monospace; }
+    #toolbar {
+      width: 100%; background: #111; padding: 8px 16px;
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    }
+    #toolbar span { color: #aaa; font-size: 13px; }
+    .tab {
+      padding: 5px 14px; border: 1px solid #555; border-radius: 4px;
+      color: #ccc; cursor: pointer; font: 13px monospace; background: #1a1a1a;
+    }
+    .tab.active { background: #2a6e2a; border-color: #5a9e3a; color: #fff; }
+    #new-branch-btn {
+      padding: 5px 12px; border: 1px solid #55a; border-radius: 4px;
+      color: #aaf; cursor: pointer; background: #0a0a1a; font: 13px monospace;
+    }
+    #new-branch-btn:hover { background: #15154a; }
+    #clear-btn {
+      margin-left: auto; padding: 5px 12px; border: 1px solid #844;
+      border-radius: 4px; color: #f88; cursor: pointer; background: #1a0a0a;
+      font: 13px monospace;
+    }
+    #info { color: #888; font-size: 12px; padding: 5px 16px; background: #0d0d0d; width: 100%; }
+    #branch-indicator { color: #fff; font-size: 12px; }
+    #img-wrap { position: relative; cursor: crosshair; }
+    #tree { display: block; max-width: 100vw; max-height: calc(100vh - 110px); }
+    #overlay {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      pointer-events: none; overflow: visible;
+    }
+    .dot {
+      position: absolute; width: 9px; height: 9px;
+      border-radius: 50%; transform: translate(-50%, -50%);
+      pointer-events: none; border: 1px solid #000;
+    }
+    #log {
+      color: #0f0; font: 11px monospace; background: #0d0d0d;
+      width: 100%; padding: 6px 16px; max-height: 110px;
+      overflow-y: auto; white-space: pre; border-top: 1px solid #222;
+    }
+  </style>
+</head>
+<body>
+  <div id="toolbar">
+    <span>Tree:</span>
+    <div class="tab active" data-tree="small"  data-src="tiles/tree-small.jpg">Small  (&lt;20 posts)</div>
+    <div class="tab"        data-tree="medium" data-src="tiles/tree-medium.jpg">Medium (&lt;100 posts)</div>
+    <div class="tab"        data-tree="large"  data-src="tiles/tree.jpg">Large  (100+ posts)</div>
+    <button id="new-branch-btn">New Branch <kbd>N</kbd></button>
+    <span id="branch-indicator">branch 0</span>
+    <button id="clear-btn">Clear</button>
+  </div>
+  <div id="info">
+    Click along a branch (trunk → tip). Press <b>N</b> or "New Branch" to start the next branch.
+    Each branch gets a different colour. Lines show the traced path.
+  </div>
+  <div id="img-wrap">
+    <img id="tree" src="tiles/tree-small.jpg" alt="tree" />
+    <svg id="overlay"></svg>
+  </div>
+  <div id="log">Trace a branch…</div>
+
+  <script>
+    const img       = document.getElementById('tree');
+    const wrap      = document.getElementById('img-wrap');
+    const log       = document.getElementById('log');
+    const indicator = document.getElementById('branch-indicator');
+    const tabs      = document.querySelectorAll('.tab');
+    const svg       = document.getElementById('overlay');
+
+    // data[tree] = array of branches; each branch = [{fx,fy}, ...]
+    const data = { small: [[]], medium: [[]], large: [[]] };
+    let currentTree = 'small';
+
+    const BRANCH_COLORS = [
+      '#ff4444', '#ff9900', '#ffee00', '#44dd44',
+      '#00ccff', '#aa44ff', '#ff44cc', '#ffffff',
+      '#ff8888', '#88ff88', '#8888ff', '#ffff88',
+    ];
+    const branchColor = i => BRANCH_COLORS[i % BRANCH_COLORS.length];
+
+    function branches()      { return data[currentTree]; }
+    function currentBranch() { const bs = branches(); return bs[bs.length - 1]; }
+    function branchIdx()     { return branches().length - 1; }
+
+    function newBranch() {
+      if (currentBranch().length === 0) return; // don't add empty branch
+      branches().push([]);
+      indicator.textContent = `branch ${branchIdx()}`;
+      indicator.style.color = branchColor(branchIdx());
+      refreshDisplay();
+    }
+
+    document.getElementById('new-branch-btn').addEventListener('click', newBranch);
+    document.addEventListener('keydown', e => {
+      if ((e.key === 'n' || e.key === 'N') && !e.ctrlKey && !e.metaKey) newBranch();
+    });
+
+    document.getElementById('clear-btn').addEventListener('click', () => {
+      data[currentTree] = [[]];
+      indicator.textContent = 'branch 0';
+      indicator.style.color = branchColor(0);
+      refreshDisplay();
+    });
+
+    tabs.forEach(tab => tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      currentTree = tab.dataset.tree;
+      img.src = tab.dataset.src;
+      indicator.textContent = `branch ${branchIdx()}`;
+      indicator.style.color = branchColor(branchIdx());
+      img.onload = refreshDisplay;
+      refreshDisplay();
+    }));
+
+    wrap.addEventListener('click', e => {
+      const rect = img.getBoundingClientRect();
+      const fx = +((e.clientX - rect.left) / rect.width).toFixed(4);
+      const fy = +((e.clientY - rect.top)  / rect.height).toFixed(4);
+      currentBranch().push({ fx, fy });
+      console.log(`[${currentTree} b${branchIdx()}] { fx: ${fx}, fy: ${fy} }`);
+      refreshDisplay();
+    });
+
+    function refreshDisplay() {
+      // Remove all dots
+      wrap.querySelectorAll('.dot').forEach(d => d.remove());
+      // Clear SVG lines
+      svg.innerHTML = '';
+
+      const bs = branches();
+      bs.forEach((branch, bi) => {
+        const color = branchColor(bi);
+        branch.forEach((pt, pi) => {
+          // Dot
+          const dot = document.createElement('div');
+          dot.className = 'dot';
+          dot.style.left       = (pt.fx * 100) + '%';
+          dot.style.top        = (pt.fy * 100) + '%';
+          dot.style.background = color;
+          wrap.appendChild(dot);
+
+          // Line from previous point
+          if (pi > 0) {
+            const prev = branch[pi - 1];
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('x1', (prev.fx * 100) + '%');
+            line.setAttribute('y1', (prev.fy * 100) + '%');
+            line.setAttribute('x2', (pt.fx   * 100) + '%');
+            line.setAttribute('y2', (pt.fy   * 100) + '%');
+            line.setAttribute('stroke',       color);
+            line.setAttribute('stroke-width', '2');
+            line.setAttribute('opacity',      '0.75');
+            svg.appendChild(line);
+          }
+        });
+      });
+
+      refreshLog();
+    }
+
+    function refreshLog() {
+      const parts = [];
+
+      for (const [tree, treeBranches] of Object.entries(data)) {
+        const filled = treeBranches.filter(b => b.length > 0);
+        if (filled.length === 0) continue;
+
+        const inner = filled.map((branch, bi) => {
+          const pts = branch
+            .map(p => `{ fx: ${p.fx.toFixed(4)}, fy: ${p.fy.toFixed(4)} }`)
+            .join(', ');
+          return `  // branch ${bi}\n  [ ${pts} ]`;
+        }).join(',\n');
+
+        parts.push(`// ── ${tree} ──\n[\n${inner}\n]`);
+      }
+
+      log.textContent = parts.join('\n\n') || 'Trace a branch…';
+      log.scrollTop = log.scrollHeight;
+    }
+
+    // Init indicator colour
+    indicator.style.color = branchColor(0);
+  </script>
+</body>
+</html>
